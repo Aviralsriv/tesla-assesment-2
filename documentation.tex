@@ -1,0 +1,479 @@
+\documentclass[12pt,a4paper]{article}
+
+% ── Packages ──────────────────────────────────────────────────────────────────
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx}
+\usepackage{amsmath, amssymb}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{hyperref}
+\usepackage{tikz}
+\usepackage{fontenc}
+\usepackage{inputenc}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+\usepackage{mdframed}
+\usepackage{enumitem}
+\usepackage{multicol}
+\usepackage{caption}
+\usepackage{float}
+\usepackage{array}
+\usepackage{tabularx}
+\usepackage[most]{tcolorbox}
+
+% ── Colors ────────────────────────────────────────────────────────────────────
+\definecolor{teslaRed}{RGB}{204, 0, 0}
+\definecolor{codeGray}{RGB}{245, 245, 245}
+\definecolor{codeBorder}{RGB}{200, 200, 200}
+\definecolor{darkBlue}{RGB}{20, 40, 100}
+\definecolor{accentBlue}{RGB}{0, 102, 204}
+
+% ── Hyperref Setup ────────────────────────────────────────────────────────────
+\hypersetup{
+    colorlinks=true,
+    linkcolor=darkBlue,
+    urlcolor=accentBlue,
+    citecolor=darkBlue,
+    pdftitle={Multimodal Self-Supervised Vehicle Log Model},
+    pdfauthor={Aviral Srivastava}
+}
+
+% ── Code Listing Style ────────────────────────────────────────────────────────
+\lstdefinestyle{pythonstyle}{
+    language=Python,
+    backgroundcolor=\color{codeGray},
+    basicstyle=\ttfamily\small,
+    keywordstyle=\color{accentBlue}\bfseries,
+    stringstyle=\color{teslaRed},
+    commentstyle=\color{gray}\itshape,
+    numberstyle=\tiny\color{gray},
+    numbers=left,
+    numbersep=8pt,
+    frame=single,
+    rulecolor=\color{codeBorder},
+    breaklines=true,
+    showstringspaces=false,
+    tabsize=4
+}
+\lstdefinestyle{bashstyle}{
+    language=bash,
+    backgroundcolor=\color{black!90},
+    basicstyle=\ttfamily\small\color{white},
+    breaklines=true,
+    frame=none,
+    showstringspaces=false
+}
+
+% ── Header / Footer ───────────────────────────────────────────────────────────
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small\textcolor{teslaRed}{\textbf{Tesla Assessment}}}
+\fancyhead[R]{\small\textcolor{gray}{Aviral Srivastava}}
+\fancyfoot[C]{\thepage}
+\renewcommand{\headrulewidth}{0.5pt}
+
+% ── Section Formatting ────────────────────────────────────────────────────────
+\titleformat{\section}{\large\bfseries\color{darkBlue}}{}{0em}{\thesection.\quad}[\color{teslaRed}\titlerule]
+\titleformat{\subsection}{\normalsize\bfseries\color{darkBlue}}{}{0em}{\thesubsection.\quad}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\begin{document}
+
+% ── Title Page ────────────────────────────────────────────────────────────────
+\begin{titlepage}
+    \centering
+    \vspace*{1cm}
+
+    {\Huge\bfseries\color{darkBlue} Multimodal Self-Supervised\\[0.3em]
+    \textcolor{teslaRed}{Vehicle Log Model}}\\[1.5cm]
+
+    {\large\textbf{Technical Documentation \& Architecture Overview}}\\[0.5cm]
+    \rule{0.6\textwidth}{0.5pt}\\[1cm]
+
+    {\large\textbf{Author:} Aviral Srivastava}\\[0.3cm]
+    {\large\textbf{Date:} \today}\\[2cm]
+
+    \begin{tcolorbox}[colback=darkBlue!5, colframe=darkBlue, width=0.85\textwidth,
+        title={\textbf{Abstract}}, fonttitle=\bfseries\color{white},
+        coltitle=white, colbacktitle=darkBlue]
+        This document presents a self-supervised multimodal foundation model for
+        autonomous vehicle log understanding. The model fuses five heterogeneous
+        sensor modalities — camera (BEV), LiDAR, CAN bus, GPS, and HD-Map —
+        using a DINOv2-style contrastive pretraining strategy with an EMA teacher
+        network. The architecture is designed for efficient transfer to downstream
+        tasks such as anomaly detection, driver behaviour classification, and
+        trajectory prediction.
+    \end{tcolorbox}
+
+    \vfill
+    \small\textcolor{gray}{Tesla Assessment | Self-Supervised Learning | PyTorch}
+\end{titlepage}
+
+\tableofcontents
+\newpage
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Introduction}
+
+Modern autonomous driving systems generate enormous volumes of heterogeneous
+sensor data — LiDAR point clouds, camera images, GPS traces, CAN bus signals, and
+HD-Map graphs. Supervised learning on such data is expensive due to annotation costs,
+while fully supervised models generalise poorly across driving environments.
+
+This project proposes a \textbf{self-supervised pretraining framework} that learns
+rich, transferable representations from unlabelled vehicle logs. The key contributions are:
+
+\begin{itemize}[leftmargin=1.5em]
+    \item A unified multimodal pipeline ingesting 5 sensor modalities from HDF5 logs.
+    \item A contrastive SSL objective combining NT-Xent and DINO-style losses.
+    \item A Fusion Transformer that produces a single 2048-dimensional embedding.
+    \item Efficient data augmentation including BEV multi-crop, LiDAR dropout, and CAN/GPS jitter.
+    \item Downstream evaluation via linear probes and trajectory heads.
+\end{itemize}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{System Architecture}
+
+\subsection{Overview}
+
+\begin{figure}[H]
+\centering
+\begin{tcolorbox}[colback=codeGray, colframe=codeBorder, width=\textwidth]
+\begin{verbatim}
+  Raw Logs (camera / LiDAR / CAN / GPS / HD-Map)
+                      |
+                      v
+     ┌────────────────────────────────────┐
+     │  VehicleLogDataset  (pipeline.py)  │
+     │  BEV projection  |  LiDAR voxels  │
+     │  CAN sequences   |  GPS tensors    │
+     │  PyG lane graph                    │
+     └──────────────┬─────────────────────┘
+                    │  DualViewAugment
+            ┌───────┴───────┐
+          View 1          View 2
+            │               │
+  ┌─────────▼───────────────▼─────────┐
+  │    Parallel Modality Encoders      │
+  │  BEV   → DINOv2 ViT-B/14  → 768  │
+  │  LiDAR → PointNet         → 1024  │
+  │  CAN   → Bi-LSTM          →  512  │
+  │  GPS   → Transformer      →  512  │
+  │  Map   → GCNConv (3-lay)  →  512  │
+  └────────────────┬──────────────────┘
+                   │  ProjectionHead (MLP, BN, GELU)
+                   v  1024-dim L2-normed
+  ┌────────────────────────────────────┐
+  │  FusionTransformer                 │
+  │  5 tokens × 1024 → cross-attn     │
+  │  → flatten → Linear → 2048-dim    │
+  └───────────────┬────────────────────┘
+                  │
+  ┌───────────────▼────────────────────┐
+  │  Contrastive Losses                │
+  │  NT-Xent (per modality + fused)    │
+  │  DINO-style vs EMA teacher         │
+  └────────────────────────────────────┘
+\end{verbatim}
+\end{tcolorbox}
+\caption{End-to-end architecture of the multimodal SSL pipeline.}
+\end{figure}
+
+\subsection{Modality Encoders}
+
+Each sensor modality is processed by a dedicated encoder:
+
+\begin{table}[H]
+\centering
+\renewcommand{\arraystretch}{1.4}
+\begin{tabularx}{\textwidth}{lXll}
+\toprule
+\textbf{Modality} & \textbf{Encoder} & \textbf{Output Dim} & \textbf{Input Shape} \\
+\midrule
+Camera / BEV & DINOv2 ViT-B/14 & 768 & $(3, 224, 224)$ \\
+LiDAR         & PointNet MLP     & 1024 & $(N, 3)$ pts \\
+CAN bus       & Bi-LSTM (2-layer) & 512 & $(T, D)$ signals \\
+GPS           & Transformer (4-head) & 512 & $(T, 3)$ coords \\
+HD-Map        & GCNConv (3-layer) & 512 & Graph $(M, 8)$ \\
+\bottomrule
+\end{tabularx}
+\caption{Summary of per-modality encoders and output dimensionalities.}
+\end{table}
+
+\subsection{Fusion Transformer}
+
+After encoding, each modality embedding is projected to a unified 1024-dim space via a
+\texttt{ProjectionHead} (3-layer MLP with BatchNorm and GELU activations, L2-normalised).
+The five projected tokens are then fused using a \textbf{FusionTransformer}:
+
+\begin{equation}
+    \mathbf{z} = \text{Linear}\bigl(\text{Flatten}(\text{TransformerEncoder}([\mathbf{p}_1, \mathbf{p}_2, \mathbf{p}_3, \mathbf{p}_4, \mathbf{p}_5]))\bigr) \in \mathbb{R}^{2048}
+\end{equation}
+
+where $\mathbf{p}_i$ are the projected modality tokens.
+
+\subsection{EMA Teacher Network}
+
+Following DINO, an \textbf{Exponential Moving Average (EMA) teacher} is maintained:
+
+\begin{equation}
+    \theta_t \leftarrow m \cdot \theta_t + (1-m) \cdot \theta_s, \quad m = 0.996
+\end{equation}
+
+The teacher provides stable target embeddings without backpropagation, preventing
+representation collapse during contrastive learning.
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Data Pipeline (\texttt{pipeline.py})}
+
+\subsection{Dataset Format}
+
+Input data is stored in \textbf{HDF5} format with one group per driving segment:
+
+\begin{lstlisting}[style=pythonstyle, caption={HDF5 dataset structure}]
+logs.h5
+├── segment_0000/
+│   ├── lidar       (N_pts, 4)   float32  # x, y, z, intensity
+│   ├── camera      (3, H, W)    float32  # RGB image
+│   ├── can         (T, 50)      float32  # CAN bus signals
+│   ├── gps         (T, 3)       float32  # lat, lon, velocity
+│   ├── map_nodes   (M, 8)       float32  # lane graph nodes
+│   └── map_edges   (2, E)       int64    # lane graph edges
+└── segment_0001/ ...
+\end{lstlisting}
+
+\subsection{VehicleLogDataset}
+
+The \texttt{VehicleLogDataset} class (\texttt{pipeline.py}) handles:
+\begin{itemize}[leftmargin=1.5em]
+    \item Loading HDF5 segments lazily (memory-efficient).
+    \item BEV projection of LiDAR via \texttt{project\_to\_bev()} — 200$\times$200 grid, 50m range.
+    \item Padding/truncating sequences to fixed length (\texttt{seq\_len=50}).
+    \item Converting map data to PyTorch Geometric \texttt{Data} objects.
+    \item Applying \texttt{DualViewAugment} to produce two augmented views per sample.
+\end{itemize}
+
+\subsection{Data Augmentation Strategy}
+
+\begin{table}[H]
+\centering
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{lll}
+\toprule
+\textbf{Modality} & \textbf{Augmentation} & \textbf{Parameters} \\
+\midrule
+BEV (Global)  & RandomResizedCrop, HFlip, ColorJitter & scale $(0.4, 1.0)$ \\
+BEV (Local)   & RandomResizedCrop, GaussianBlur       & scale $(0.05, 0.4)$, 6 crops \\
+LiDAR         & Point dropout + Gaussian jitter        & 30\% drop, $\sigma=0.02$ \\
+CAN bus       & Gaussian noise + temporal masking      & $\sigma=0.01$, 10\% mask \\
+GPS           & Coordinate + velocity jitter           & $\sigma_{coord}=0.0001$ \\
+\bottomrule
+\end{tabular}
+\caption{Multi-modal augmentation pipeline.}
+\end{table}
+
+\subsection{Custom Collate Function}
+
+The \texttt{ssl\_collate\_fn} stacks tensors per modality across batch items and
+batches PyG graphs using \texttt{Batch.from\_data\_list()} for efficient GPU parallelism.
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Training Procedure (\texttt{train.py})}
+
+\subsection{Loss Functions}
+
+The total SSL loss combines three objectives:
+
+\begin{equation}
+    \mathcal{L}_{\text{total}} = \mathcal{L}_{\text{NT-Xent}}^{\text{fused}} + \sum_{m} \mathcal{L}_{\text{NT-Xent}}^{(m)} + \mathcal{L}_{\text{DINO}}
+\end{equation}
+
+\textbf{NT-Xent (Normalised Temperature-scaled Cross Entropy):}
+\begin{equation}
+    \mathcal{L}_{\text{NT-Xent}} = -\log \frac{\exp(\mathbf{z}_i \cdot \mathbf{z}_j / \tau)}{\sum_{k \neq i} \exp(\mathbf{z}_i \cdot \mathbf{z}_k / \tau)}, \quad \tau = 0.1
+\end{equation}
+
+\textbf{DINO Loss} uses Sinkhorn-Knopp normalisation on teacher soft labels:
+\begin{equation}
+    \mathcal{L}_{\text{DINO}} = -\sum_k p_t^{(k)} \log p_s^{(k)}
+\end{equation}
+
+\subsection{Optimiser and Learning Rate Schedule}
+
+\begin{itemize}[leftmargin=1.5em]
+    \item \textbf{Optimiser:} AdamW with decoupled weight decay ($\beta_1=0.9, \beta_2=0.999$)
+    \item \textbf{LR Schedule:} Cosine annealing with 5\% linear warmup
+    \item \textbf{Gradient clipping:} $\|\nabla\|_2 \leq 3.0$
+    \item \textbf{Mixed Precision:} AMP via \texttt{torch.amp.GradScaler}
+\end{itemize}
+
+\begin{equation}
+    \eta(t) = \eta_{\min} + \frac{1}{2}(\eta_{\max} - \eta_{\min})\left(1 + \cos\left(\frac{\pi (t - t_w)}{T - t_w}\right)\right)
+\end{equation}
+
+\subsection{Key Hyperparameters}
+
+\begin{table}[H]
+\centering
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{lll}
+\toprule
+\textbf{Parameter} & \textbf{Default} & \textbf{Description} \\
+\midrule
+\texttt{lr}             & $1 \times 10^{-4}$  & AdamW base learning rate \\
+\texttt{batch\_size}    & 8                    & Per-GPU batch size \\
+\texttt{temperature}    & 0.1                  & NT-Xent temperature $\tau$ \\
+\texttt{ema\_momentum}  & 0.996                & Teacher EMA coefficient \\
+\texttt{epochs}         & 20                   & Training epochs \\
+\texttt{weight\_decay}  & 0.04                 & AdamW weight decay \\
+\texttt{freeze\_dino}   & True                 & Freeze DINOv2 backbone \\
+\texttt{amp}            & False                & Mixed precision training \\
+\bottomrule
+\end{tabular}
+\caption{Training hyperparameters.}
+\end{table}
+
+\subsection{Checkpoint Strategy}
+
+Checkpoints are saved after every epoch as \texttt{ckpt\_epoch\{N\}.pt} and a rolling
+\texttt{ckpt\_last.pt}. Each checkpoint stores student weights, teacher weights,
+optimiser state, and scaler state for seamless resumption via \texttt{--resume}.
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Evaluation (\texttt{eval.py})}
+
+\subsection{Linear Probe}
+
+A linear classifier is trained on frozen representations for binary classification tasks
+(e.g., accident detection, driver behaviour):
+
+\begin{equation}
+    \hat{y} = \text{softmax}(W \mathbf{z} + b)
+\end{equation}
+
+\textbf{Target metric:} AUROC $> 0.90$ for accident prediction.
+
+\subsection{Trajectory Prediction}
+
+A lightweight MLP head predicts 30-step future trajectories:
+
+\begin{itemize}[leftmargin=1.5em]
+    \item \textbf{ADE} (Average Displacement Error): $< 1.5$ m
+    \item \textbf{FDE} (Final Displacement Error): $< 3.0$ m
+\end{itemize}
+
+\subsection{Expected Results}
+
+\begin{table}[H]
+\centering
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{lll}
+\toprule
+\textbf{Task} & \textbf{Metric} & \textbf{Target} \\
+\midrule
+Accident prediction   & AUROC & $>0.90$ \\
+Driver behaviour      & AUROC & $>0.85$ \\
+Trajectory (30-step)  & ADE   & $<1.5$ m \\
+Trajectory (30-step)  & FDE   & $<3.0$ m \\
+\bottomrule
+\end{tabular}
+\caption{Downstream task evaluation targets.}
+\end{table}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{File Structure}
+
+\begin{lstlisting}[style=pythonstyle, caption={Project directory layout}]
+tesla-assessment/
+├── train.py          # Main SSL training entry point
+├── eval.py           # Linear probe + trajectory evaluation
+├── pipeline.py       # Dataset, DataLoader, collate_fn
+├── requirements.txt  # Python dependencies
+├── README.md         # Project overview
+├── models/
+│   ├── __init__.py
+│   ├── encoders.py   # 5 modality encoders + ProjectionHead
+│   ├── fusion.py     # FusionTransformer + EMA utils
+│   └── losses.py     # NT-Xent, Sinkhorn-Knopp, DINO loss
+└── utils/
+    ├── __init__.py
+    ├── bev.py        # BEV projection + LiDAR voxelization
+    └── augment.py    # Multi-crop, dropout, CAN/GPS jitter
+\end{lstlisting}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Quick Start}
+
+\subsection{Installation}
+
+\begin{lstlisting}[style=bashstyle, caption={Environment setup}]
+conda create -n vssl python=3.10
+conda activate vssl
+pip install -r requirements.txt
+
+# PyG (match CUDA version)
+pip install torch-geometric torch-scatter torch-sparse \
+    -f https://data.pyg.org/whl/torch-2.2.0+cu121.html
+\end{lstlisting}
+
+\subsection{Training}
+
+\begin{lstlisting}[style=bashstyle, caption={Launch SSL pretraining}]
+python train.py \
+    --data_root /path/to/logs_256.h5 \
+    --epochs 20 \
+    --batch_size 8 \
+    --num_workers 0 \
+    --freeze_dino \
+    --log_every 4
+\end{lstlisting}
+
+\subsection{Google Colab (Recommended)}
+
+For faster training on cloud GPU (T4), use the provided \texttt{Tesla\_Colab\_Training.ipynb}
+notebook which automatically generates a synthetic dataset matching the HDF5 format and
+trains the model end-to-end in approximately 15 minutes.
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Dependencies}
+
+\begin{table}[H]
+\centering
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{ll}
+\toprule
+\textbf{Package} & \textbf{Purpose} \\
+\midrule
+\texttt{torch $\geq$ 2.0}       & Deep learning framework \\
+\texttt{torchvision}             & Image transforms \\
+\texttt{torch-geometric}         & Graph neural networks (HD-Map) \\
+\texttt{h5py}                    & HDF5 dataset loading \\
+\texttt{numpy, pandas}           & Data processing \\
+\texttt{tensorboard}             & Training visualisation \\
+\texttt{wandb}                   & Experiment tracking (optional) \\
+\bottomrule
+\end{tabular}
+\caption{Key project dependencies.}
+\end{table}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Conclusion}
+
+This project demonstrates a complete self-supervised multimodal learning pipeline for
+autonomous vehicle data. By combining DINOv2-style contrastive pretraining with a
+Fusion Transformer, the system learns semantically rich representations from unlabelled
+sensor logs that transfer effectively to safety-critical downstream tasks.
+
+The modular design — with separate encoder, fusion, loss, and pipeline components —
+enables straightforward extension to additional modalities or alternative SSL objectives
+such as MAE or VICReg.
+
+\vspace{1em}
+\begin{tcolorbox}[colback=darkBlue!5, colframe=darkBlue]
+\textbf{GitHub Repository:}
+\href{https://github.com/Aviralsriv/tesla-assesment-2}{\texttt{github.com/Aviralsriv/tesla-assesment-2}}
+\end{tcolorbox}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\end{document}
