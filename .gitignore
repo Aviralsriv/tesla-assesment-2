@@ -1,6 +1,0 @@
-*.h5
-Dataset/
-checkpoints/
-runs/
-__pycache__/
-.venv/
